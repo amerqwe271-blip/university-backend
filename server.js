@@ -7,12 +7,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// إعداد الاتصال بقاعدة البيانات Supabase
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
-// 1. Health Check
+// ==========================================
+// 1. الصفحة الرئيسية واختبار الاتصال (Health Check)
+// ==========================================
 app.get('/', async (req, res) => {
   try {
     const result = await pool.query('SELECT NOW()');
@@ -26,7 +29,11 @@ app.get('/', async (req, res) => {
   }
 });
 
-// 2. جلب جميع الأقسام
+// ==========================================
+// 2. إدارة الأقسام (Departments)
+// ==========================================
+
+// جلب جميع الأقسام
 app.get('/api/departments', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM departments ORDER BY id ASC');
@@ -36,7 +43,11 @@ app.get('/api/departments', async (req, res) => {
   }
 });
 
-// 3. جلب جميع الطلاب
+// ==========================================
+// 3. إدارة الطلاب (Students)
+// ==========================================
+
+// جلب جميع الطلاب مع اسم القسم
 app.get('/api/students', async (req, res) => {
   try {
     const result = await pool.query(`
@@ -51,7 +62,7 @@ app.get('/api/students', async (req, res) => {
   }
 });
 
-// 4. جلب طالب محدد عبر الرقم الأكاديمي
+// البحث عن طالب محدد بواسطة الرقم الأكاديمي
 app.get('/api/students/:student_id', async (req, res) => {
   const { student_id } = req.params;
   try {
@@ -72,7 +83,7 @@ app.get('/api/students/:student_id', async (req, res) => {
   }
 });
 
-// 5. إضافة طالب جديد (فحص الـ 9 أرقام)
+// إضافة طالب جديد (شرط الـ 9 أرقام للرقم الأكاديمي)
 app.post('/api/students', async (req, res) => {
   const { student_id, name, email, department_id } = req.body;
 
@@ -102,7 +113,7 @@ app.post('/api/students', async (req, res) => {
   }
 });
 
-// 6. حذف طالب بواسطة الرقم الأكاديمي
+// حذف طالب بواسطة الرقم الأكاديمي
 app.delete('/api/students/:student_id', async (req, res) => {
   const { student_id } = req.params;
   try {
@@ -116,7 +127,11 @@ app.delete('/api/students/:student_id', async (req, res) => {
   }
 });
 
-// 7. جلب قائمة المواد الدراسية (Courses)
+// ==========================================
+// 4. إدارة المواد الدراسية (Courses)
+// ==========================================
+
+// جلب جميع المواد الدراسية
 app.get('/api/courses', async (req, res) => {
   try {
     const result = await pool.query(`
@@ -131,7 +146,7 @@ app.get('/api/courses', async (req, res) => {
   }
 });
 
-// 8. إضافة مادة دراسية جديدة
+// إضافة مادة دراسية جديدة
 app.post('/api/courses', async (req, res) => {
   const { code, name, credits, department_id } = req.body;
   try {
@@ -147,6 +162,67 @@ app.post('/api/courses', async (req, res) => {
   }
 });
 
+// ==========================================
+// 5. إدارة تسجيل المواد والدرجات (Enrollments & Grades)
+// ==========================================
+
+// تسجيل مادة لطالب
+app.post('/api/enrollments', async (req, res) => {
+  const { student_id, course_id } = req.body;
+  try {
+    const query = `
+      INSERT INTO enrollments (student_id, course_id)
+      VALUES ($1, $2)
+      RETURNING *
+    `;
+    const result = await pool.query(query, [student_id, course_id]);
+    res.status(201).json({ success: true, message: 'تم تسجيل المادة للطالب بنجاح', data: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// عرض المواد المسجلة مع الدرجات
+app.get('/api/enrollments', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT e.id as enrollment_id, s.student_id, s.name as student_name, 
+             c.code as course_code, c.name as course_name, e.grade
+      FROM enrollments e
+      JOIN students s ON e.student_id = s.id
+      JOIN courses c ON e.course_id = c.id
+      ORDER BY e.created_at DESC
+    `);
+    res.json({ success: true, data: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// رصد وتحديث درجة طالب في مادة
+app.put('/api/enrollments/:id/grade', async (req, res) => {
+  const { id } = req.params;
+  const { grade } = req.body;
+  
+  if (grade < 0 || grade > 100) {
+    return res.status(400).json({ success: false, error: 'الدرجة يجب أن تكون بين 0 و 100' });
+  }
+
+  try {
+    const result = await pool.query(
+      'UPDATE enrollments SET grade = $1 WHERE id = $2 RETURNING *',
+      [grade, id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'سجل التسجيل غير موجود' });
+    }
+    res.json({ success: true, message: 'تم تحديث الدرجة بنجاح', data: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// تشغيل السيرفر
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

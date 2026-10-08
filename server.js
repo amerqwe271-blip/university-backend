@@ -12,7 +12,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// Health Check Endpoint
+// 1. Health Check
 app.get('/', async (req, res) => {
   try {
     const result = await pool.query('SELECT NOW()');
@@ -22,12 +22,11 @@ app.get('/', async (req, res) => {
       time: result.rows[0].now 
     });
   } catch (err) {
-    console.error('Database Connection Error:', err);
     res.status(500).json({ success: false, error: 'حدث خطأ في الاتصال بقاعدة البيانات' });
   }
 });
 
-// 1. جلب قائمة الأقسام
+// 2. جلب جميع الأقسام
 app.get('/api/departments', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM departments ORDER BY id ASC');
@@ -37,7 +36,7 @@ app.get('/api/departments', async (req, res) => {
   }
 });
 
-// 2. جلب جميع الطلاب
+// 3. جلب جميع الطلاب
 app.get('/api/students', async (req, res) => {
   try {
     const result = await pool.query(`
@@ -52,11 +51,31 @@ app.get('/api/students', async (req, res) => {
   }
 });
 
-// 3. إضافة طالب جديد مع فحص الرقم الأكاديمي (9 أرقام)
+// 4. جلب طالب محدد عبر الرقم الأكاديمي
+app.get('/api/students/:student_id', async (req, res) => {
+  const { student_id } = req.params;
+  try {
+    const result = await pool.query(`
+      SELECT s.*, d.name as department_name 
+      FROM students s 
+      LEFT JOIN departments d ON s.department_id = d.id 
+      WHERE s.student_id = $1
+    `, [student_id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'الطالب غير موجود' });
+    }
+
+    res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5. إضافة طالب جديد (فحص الـ 9 أرقام)
 app.post('/api/students', async (req, res) => {
   const { student_id, name, email, department_id } = req.body;
 
-  // التحقق من أن الرقم الأكاديمي يتكون من 9 أرقام بالضبط
   if (!student_id || !/^\d{9}$/.test(student_id)) {
     return res.status(400).json({ 
       success: false, 
@@ -78,6 +97,51 @@ app.post('/api/students', async (req, res) => {
       message: 'تم إضافة الطالب بنجاح',
       data: result.rows[0]
     });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 6. حذف طالب بواسطة الرقم الأكاديمي
+app.delete('/api/students/:student_id', async (req, res) => {
+  const { student_id } = req.params;
+  try {
+    const result = await pool.query('DELETE FROM students WHERE student_id = $1 RETURNING *', [student_id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'الطالب غير موجود' });
+    }
+    res.json({ success: true, message: 'تم حذف الطالب بنجاح' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 7. جلب قائمة المواد الدراسية (Courses)
+app.get('/api/courses', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT c.*, d.name as department_name 
+      FROM courses c 
+      LEFT JOIN departments d ON c.department_id = d.id 
+      ORDER BY c.id ASC
+    `);
+    res.json({ success: true, data: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8. إضافة مادة دراسية جديدة
+app.post('/api/courses', async (req, res) => {
+  const { code, name, credits, department_id } = req.body;
+  try {
+    const query = `
+      INSERT INTO courses (code, name, credits, department_id)
+      VALUES ($1, $2, $3, $4)
+      RETURNING *
+    `;
+    const result = await pool.query(query, [code, name, credits || 3, department_id]);
+    res.status(201).json({ success: true, message: 'تم إضافة المادة بنجاح', data: result.rows[0] });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
